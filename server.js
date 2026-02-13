@@ -13,58 +13,116 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-/* ==========================
-   DETECCIÓN DE EMERGENCIA
-   (tolerante a errores)
-========================== */
+/* =====================================================
+   🔎 NORMALIZADOR DE TEXTO (más robusto)
+===================================================== */
 
-const EMERGENCY_KEYWORDS = [
+function normalize(text) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/gi, "");
+}
+
+/* =====================================================
+   🚨 LISTAS DE EMERGENCIA ESCALONADAS
+===================================================== */
+
+// 🔴 EMERGENCIA GRAVE (médica o suicida)
+const HIGH_RISK = [
+  "no respira",
+  "no puedo respirar",
+  "no puede respirar",
+  "se esta ahogando",
+  "me ahogo",
+  "me falta el aire",
+  "convulsiona",
+  "convulsion",
+  "inconsciente",
+  "no responde",
+  "desmayo",
+  "se desmayo",
+  "me quiero morir",
+  "me quiero matar",
+  "suicidio",
+  "se quiere matar",
+  "emergencia",
+  "urgente ya",
+  "911",
+  "107",
+  "ambulancia",
+  "policia ya"
+  "no puedo respirar"
+  "no respiro"
+];
+
+// 🟠 CRISIS FUERTE (desregulación severa)
+const MEDIUM_RISK = [
   "crisis",
   "crisi",
   "cricis",
   "crizis",
-  "nervios",
-  "ataque",
+  "ataque de nervios",
   "descontrol",
-  "grita",
-  "llora",
-  "se golpea",
   "no se calma",
-  "perdió control",
+  "llora mucho",
+  "grita fuerte",
+  "se golpea",
   "autolesion",
-  "autolesión",
-  "se lastima",
-  "urgente",
-  "emergencia"
+  "meltdown",
+  "colapso",
+  "sobrecarga",
+  "perdio control"
 ];
 
-function isEmergency(text) {
-  const normalized = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+/* =====================================================
+   🧠 DETECTOR INTELIGENTE
+===================================================== */
 
-  return EMERGENCY_KEYWORDS.some(word =>
-    normalized.includes(word)
-  );
+function detectRisk(text) {
+  const normalized = normalize(text);
+
+  if (HIGH_RISK.some(word => normalized.includes(word))) {
+    return "HIGH";
+  }
+
+  if (MEDIUM_RISK.some(word => normalized.includes(word))) {
+    return "MEDIUM";
+  }
+
+  return "LOW";
 }
 
-/* ==========================
-   SYSTEM PROMPTS
-========================== */
+/* =====================================================
+   🧩 SYSTEM PROMPTS DINÁMICOS
+===================================================== */
 
-function getSystemPrompt(mode, emergency) {
-  if (emergency) {
+function getSystemPrompt(mode, risk) {
+
+  if (risk === "HIGH") {
+    return `
+Sos un asistente especializado en emergencias.
+
+REGLAS:
+- Responder SOLO con pasos numerados.
+- Frases muy cortas.
+- Máximo 6 pasos.
+- Indicar buscar ayuda inmediata.
+- No explicar teoría.
+- Enfocado en el AHORA.
+`;
+  }
+
+  if (risk === "MEDIUM") {
     return `
 Sos un asistente especializado en crisis emocionales en niños con TEA.
 
-REGLAS OBLIGATORIAS:
-- Respondé SOLO con pasos claros y numerados.
-- Frases MUY cortas.
-- Lenguaje directo y calmado.
-- NO expliques, NO hagas preguntas largas.
+REGLAS:
+- Pasos claros y prácticos.
+- Lenguaje simple.
+- Frases cortas.
 - Máximo 6 pasos.
-- Enfocado en el AHORA.
 `;
   }
 
@@ -72,30 +130,36 @@ REGLAS OBLIGATORIAS:
     return `
 Sos un asistente empático especializado en acompañar a padres de niños con TEA.
 
-Reglas:
-- Asumí siempre que el niño tiene TEA.
-- Explicá con claridad y sin juzgar.
-- Sé práctico, realista y humano.
-- Evitá textos innecesariamente largos.
+- Sé práctico.
+- Sé humano.
+- No juzgues.
+- No seas excesivamente largo.
 `;
   }
 
   return `
 Sos un asistente empático para adultos.
-Escuchás, contenés y ayudás a reflexionar con calma.
+Escuchás y acompañás con calma.
 `;
 }
 
-/* ==========================
-   ENDPOINT CHAT
-========================== */
+/* =====================================================
+   💬 ENDPOINT CHAT
+===================================================== */
 
 app.post("/chat", async (req, res) => {
   try {
     const { message, mode } = req.body;
 
-    const emergency = isEmergency(message);
-    const systemPrompt = getSystemPrompt(mode, emergency);
+    if (!message) {
+      return res.status(400).json({
+        reply: "Mensaje vacío.",
+        risk: "LOW"
+      });
+    }
+
+    const risk = detectRisk(message);
+    const systemPrompt = getSystemPrompt(mode, risk);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -103,32 +167,32 @@ app.post("/chat", async (req, res) => {
         { role: "system", content: systemPrompt },
         { role: "user", content: message }
       ],
-      temperature: emergency ? 0.2 : 0.6
+      temperature: risk === "HIGH" ? 0.2 : 0.6
     });
 
-    let reply = completion.choices[0].message.content;
-
-    // Limpieza defensiva
-    reply = reply.trim();
+    let reply = completion.choices[0].message.content.trim();
 
     res.json({
       reply,
-      emergency
+      risk
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("❌ ERROR:", error);
+
     res.status(500).json({
       reply: "No se pudo procesar la solicitud.",
-      emergency: false
+      risk: "LOW"
     });
   }
 });
 
-/* ==========================
-   SERVER
-========================== */
+/* =====================================================
+   🚀 SERVER
+===================================================== */
 
-app.listen(3000, () => {
-  console.log("✅ Backend corriendo en http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Backend corriendo en puerto ${PORT}`);
 });
