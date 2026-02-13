@@ -52,9 +52,9 @@ const HIGH_RISK = [
   "911",
   "107",
   "ambulancia",
-  "policia ya"
-  "no puedo respirar"
-  "no respiro"
+  "policia ya",
+  "no puedo respirar",
+  "no respiro",
 ];
 
 // 🟠 CRISIS FUERTE (desregulación severa)
